@@ -57,6 +57,20 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 - PubMed：`.nbib`、`.csv`、`.txt`
 - GEO：包含 GSE/GSM metadata 的 `.csv`、`.tsv`、`.txt`
 
+## 在线获取
+
+PubMed：
+
+- 粘贴 PMID 列表，自动调用 NCBI EFetch 获取标题、摘要、MeSH、期刊、年份
+- 粘贴 PubMed 检索式，自动调用 ESearch + EFetch 获取可筛选记录
+- 可用 DeepSeek 根据研究问题生成 PubMed 检索式
+
+GEO：
+
+- 粘贴 NCBI GEO DataSets / GDS 检索式，自动调用 ESearch + ESummary 获取 metadata
+- 可用 DeepSeek 根据研究问题生成 GEO/GDS 检索式
+- 输出字段包括 accession、title、summary、platform、samples、organism 等
+
 ## 输出
 
 - Excel 可打开的 `.xls`

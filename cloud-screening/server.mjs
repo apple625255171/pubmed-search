@@ -31,6 +31,18 @@ createServer(async (request, response) => {
       return handleTest(response);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/pubmed/pmids") {
+      return handlePubMedPmids(request, response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/pubmed/search") {
+      return handlePubMedSearch(request, response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/query/generate") {
+      return handleQueryGenerate(request, response);
+    }
+
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const filePath = normalize(join(publicRoot, requested));
     if (!filePath.startsWith(publicRoot)) return text(response, 403, "Forbidden");
@@ -66,6 +78,51 @@ async function handleScreen(request, response) {
   json(response, 200, { results: results.map(normalizeResult) });
 }
 
+async function handlePubMedPmids(request, response) {
+  const { pmids = "" } = await readJson(request);
+  const ids = extractPmids(pmids);
+  if (!ids.length) return json(response, 400, { error: "没有识别到 PMID" });
+  const records = await fetchPubMedRecords(ids);
+  json(response, 200, { records });
+}
+
+async function handlePubMedSearch(request, response) {
+  const { query = "", retmax = 200 } = await readJson(request);
+  if (!String(query).trim()) return json(response, 400, { error: "query 不能为空" });
+  const max = Math.max(1, Math.min(10000, Number(retmax) || 200));
+  const searchUrl = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi");
+  searchUrl.searchParams.set("db", "pubmed");
+  searchUrl.searchParams.set("term", query);
+  searchUrl.searchParams.set("retmode", "json");
+  searchUrl.searchParams.set("retmax", String(max));
+  searchUrl.searchParams.set("sort", "relevance");
+  searchUrl.searchParams.set("tool", "medical_screening_pipeline");
+  const search = await fetch(searchUrl).then((res) => {
+    if (!res.ok) throw new Error(`NCBI ESearch 错误：${res.status}`);
+    return res.json();
+  });
+  const ids = search.esearchresult?.idlist || [];
+  const records = await fetchPubMedRecords(ids);
+  json(response, 200, { count: Number(search.esearchresult?.count || 0), ids, records });
+}
+
+async function handleQueryGenerate(request, response) {
+  const { question = "", include = "", exclude = "" } = await readJson(request);
+  if (!String(question).trim()) return json(response, 400, { error: "研究问题不能为空" });
+  const data = await callDeepSeek([
+    {
+      role: "system",
+      content: "你是医学信息检索专家。只输出 JSON，不要输出 markdown。"
+    },
+    {
+      role: "user",
+      content: `请把医学研究问题转换为 PubMed 高敏感检索式。\n研究问题：${question}\n纳入标准：${include}\n排除标准：${exclude}\n\n要求：\n1. 使用 MeSH 主题词 [Mesh] 和自由词 [Title/Abstract]。\n2. 疾病、干预/暴露、结局分别成组，组内 OR，组间 AND。\n3. 输出 JSON：{"query":"...","meshTerms":["..."],"freeTerms":["..."],"inclusionDraft":"...","exclusionDraft":"...","notes":"..."}。`
+    }
+  ]);
+  const content = data.choices?.[0]?.message?.content || "";
+  json(response, 200, parseModelJson(content));
+}
+
 function buildMessages(records, criteria) {
   const taskType = criteria.taskType === "geo" ? "GEO 数据集/样本" : "PubMed 文献";
   return [
@@ -98,6 +155,63 @@ async function callDeepSeek(messages) {
   });
   if (!res.ok) throw new Error(`DeepSeek API 错误：${res.status} ${await res.text()}`);
   return res.json();
+}
+
+async function fetchPubMedRecords(ids) {
+  const unique = [...new Set(ids.map(String).filter(Boolean))];
+  const chunks = [];
+  for (let i = 0; i < unique.length; i += 200) chunks.push(unique.slice(i, i + 200));
+  const records = [];
+  for (const chunk of chunks) {
+    const fetchUrl = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi");
+    fetchUrl.searchParams.set("db", "pubmed");
+    fetchUrl.searchParams.set("id", chunk.join(","));
+    fetchUrl.searchParams.set("rettype", "medline");
+    fetchUrl.searchParams.set("retmode", "text");
+    fetchUrl.searchParams.set("tool", "medical_screening_pipeline");
+    const text = await fetch(fetchUrl).then((res) => {
+      if (!res.ok) throw new Error(`NCBI EFetch 错误：${res.status}`);
+      return res.text();
+    });
+    records.push(...parseMedline(text));
+  }
+  return records;
+}
+
+function parseMedline(text) {
+  return text.split(/\n\s*\n/).map((chunk, index) => {
+    const fields = {};
+    let key = null;
+    for (const line of chunk.split(/\r?\n/)) {
+      const match = line.match(/^([A-Z0-9]{2,4})\s*-\s*(.*)$/);
+      if (match) {
+        key = match[1];
+        fields[key] ||= [];
+        fields[key].push(match[2].trim());
+      } else if (key && line.trim()) {
+        fields[key].push(line.trim());
+      }
+    }
+    if (!Object.keys(fields).length) return null;
+    return {
+      id: fields.PMID?.[0] || `PMID-${index + 1}`,
+      title: joinField(fields.TI),
+      abstract: joinField(fields.AB),
+      year: (fields.DP?.[0] || "").match(/\d{4}/)?.[0] || "",
+      journal: fields.JT?.[0] || fields.TA?.[0] || "",
+      publicationType: joinField(fields.PT, "; "),
+      mesh: joinField(fields.MH, "; "),
+      type: "pubmed"
+    };
+  }).filter(Boolean);
+}
+
+function joinField(value, separator = " ") {
+  return (value || []).join(separator).replace(/\s+/g, " ").trim();
+}
+
+function extractPmids(value) {
+  return [...new Set(String(value).match(/\b\d{6,9}\b/g) || [])];
 }
 
 function parseModelJson(content) {

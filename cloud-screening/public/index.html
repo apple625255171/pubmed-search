@@ -28,6 +28,20 @@
       <input id="fileInput" type="file" accept=".nbib,.ris,.csv,.tsv,.txt">
       <button id="parseButton" type="button">解析文件</button>
 
+      <h2>PubMed 在线获取</h2>
+      <label for="pmidInput">PMID 列表</label>
+      <textarea id="pmidInput" placeholder="40790272&#10;40758331&#10;41230651"></textarea>
+      <button id="fetchPmidsButton" class="secondary" type="button">按 PMID 获取摘要</button>
+
+      <label for="pubmedQuery">PubMed 检索式</label>
+      <textarea id="pubmedQuery" placeholder="可手动粘贴检索式，或先填写研究问题后点击生成检索式"></textarea>
+      <label for="retmax">最多获取条数</label>
+      <input id="retmax" type="number" min="1" max="10000" value="200">
+      <div class="actions">
+        <button id="generateQueryButton" class="secondary" type="button">生成检索式</button>
+        <button id="searchPubMedButton" class="secondary" type="button">搜索并获取</button>
+      </div>
+
       <label for="researchQuestion">研究问题</label>
       <textarea id="researchQuestion" placeholder="例如：胃癌根治术后并发症的危险因素"></textarea>
       <label for="includeCriteria">纳入标准</label>

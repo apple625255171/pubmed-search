@@ -210,6 +210,54 @@ async function apiPost(path, body = {}) {
   return data;
 }
 
+async function generateQuery() {
+  try {
+    log("正在用 DeepSeek 生成 PubMed 检索式...");
+    const data = await apiPost("/api/query/generate", {
+      question: $("#researchQuestion").value.trim(),
+      include: $("#includeCriteria").value.trim(),
+      exclude: $("#excludeCriteria").value.trim()
+    });
+    $("#pubmedQuery").value = data.query || "";
+    if (data.inclusionDraft && !$("#includeCriteria").value.trim()) $("#includeCriteria").value = data.inclusionDraft;
+    if (data.exclusionDraft && !$("#excludeCriteria").value.trim()) $("#excludeCriteria").value = data.exclusionDraft;
+    log(`检索式生成完成。MeSH: ${(data.meshTerms || []).join("; ")}`);
+  } catch (error) {
+    log(`生成检索式失败：${error.message}`);
+  }
+}
+
+async function fetchByPmids() {
+  try {
+    log("正在按 PMID 获取 PubMed 摘要...");
+    const data = await apiPost("/api/pubmed/pmids", { pmids: $("#pmidInput").value });
+    state.records = data.records || [];
+    state.results.clear();
+    log(`已获取 ${state.records.length} 条 PubMed 记录。`);
+    render();
+  } catch (error) {
+    log(`获取 PMID 失败：${error.message}`);
+  }
+}
+
+async function searchPubMed() {
+  try {
+    const query = $("#pubmedQuery").value.trim();
+    if (!query) return log("请先填写或生成 PubMed 检索式。");
+    log("正在搜索 PubMed 并获取摘要...");
+    const data = await apiPost("/api/pubmed/search", {
+      query,
+      retmax: Number($("#retmax").value) || 200
+    });
+    state.records = data.records || [];
+    state.results.clear();
+    log(`PubMed 总命中 ${data.count} 条，已获取 ${state.records.length} 条。`);
+    render();
+  } catch (error) {
+    log(`PubMed 搜索失败：${error.message}`);
+  }
+}
+
 async function testServer() {
   try {
     log("测试服务器与 DeepSeek 连接...");
@@ -325,6 +373,9 @@ $("#sampleButton").addEventListener("click", () => {
 });
 
 $("#testButton").addEventListener("click", testServer);
+$("#generateQueryButton").addEventListener("click", generateQuery);
+$("#fetchPmidsButton").addEventListener("click", fetchByPmids);
+$("#searchPubMedButton").addEventListener("click", searchPubMed);
 $("#screenButton").addEventListener("click", screenRecords);
 $("#decisionFilter").addEventListener("change", renderResults);
 $("#exportExcelButton").addEventListener("click", exportExcel);

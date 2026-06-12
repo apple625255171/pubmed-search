@@ -43,6 +43,14 @@ createServer(async (request, response) => {
       return handleQueryGenerate(request, response);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/geo/query/generate") {
+      return handleGeoQueryGenerate(request, response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/geo/search") {
+      return handleGeoSearch(request, response);
+    }
+
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const filePath = normalize(join(publicRoot, requested));
     if (!filePath.startsWith(publicRoot)) return text(response, 403, "Forbidden");
@@ -121,6 +129,43 @@ async function handleQueryGenerate(request, response) {
   ]);
   const content = data.choices?.[0]?.message?.content || "";
   json(response, 200, parseModelJson(content));
+}
+
+async function handleGeoQueryGenerate(request, response) {
+  const { question = "", include = "", exclude = "" } = await readJson(request);
+  if (!String(question).trim()) return json(response, 400, { error: "研究问题不能为空" });
+  const data = await callDeepSeek([
+    {
+      role: "system",
+      content: "你是 GEO/NCBI GDS 数据库检索专家。只输出 JSON，不要输出 markdown。"
+    },
+    {
+      role: "user",
+      content: `请把生信公共数据研究问题转换为 NCBI GEO DataSets / GDS 可用检索式。\n研究问题：${question}\n纳入标准：${include}\n排除标准：${exclude}\n\n要求：\n1. 适用于 NCBI E-utilities db=gds 的 term 参数。\n2. 优先包含疾病、物种、平台/组学类型、关键状态或治疗条件。\n3. 人类物种请使用 "Homo sapiens"[porgn:__txid9606]。\n4. 不要写 PubMed 字段标签。\n5. 输出 JSON：{"query":"...","concepts":["..."],"organism":"...","datasetCriteria":"...","sampleCriteria":"...","notes":"..."}。`
+    }
+  ]);
+  const content = data.choices?.[0]?.message?.content || "";
+  json(response, 200, parseModelJson(content));
+}
+
+async function handleGeoSearch(request, response) {
+  const { query = "", retmax = 200 } = await readJson(request);
+  if (!String(query).trim()) return json(response, 400, { error: "GEO query 不能为空" });
+  const max = Math.max(1, Math.min(10000, Number(retmax) || 200));
+  const searchUrl = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi");
+  searchUrl.searchParams.set("db", "gds");
+  searchUrl.searchParams.set("term", query);
+  searchUrl.searchParams.set("retmode", "json");
+  searchUrl.searchParams.set("retmax", String(max));
+  searchUrl.searchParams.set("sort", "relevance");
+  searchUrl.searchParams.set("tool", "medical_screening_pipeline");
+  const search = await fetch(searchUrl).then((res) => {
+    if (!res.ok) throw new Error(`NCBI GDS ESearch 错误：${res.status}`);
+    return res.json();
+  });
+  const ids = search.esearchresult?.idlist || [];
+  const records = await fetchGeoSummaries(ids);
+  json(response, 200, { count: Number(search.esearchresult?.count || 0), ids, records });
 }
 
 function buildMessages(records, criteria) {
@@ -212,6 +257,50 @@ function joinField(value, separator = " ") {
 
 function extractPmids(value) {
   return [...new Set(String(value).match(/\b\d{6,9}\b/g) || [])];
+}
+
+async function fetchGeoSummaries(ids) {
+  const unique = [...new Set(ids.map(String).filter(Boolean))];
+  const records = [];
+  for (let i = 0; i < unique.length; i += 200) {
+    const chunk = unique.slice(i, i + 200);
+    const summaryUrl = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi");
+    summaryUrl.searchParams.set("db", "gds");
+    summaryUrl.searchParams.set("id", chunk.join(","));
+    summaryUrl.searchParams.set("retmode", "json");
+    summaryUrl.searchParams.set("tool", "medical_screening_pipeline");
+    const data = await fetch(summaryUrl).then((res) => {
+      if (!res.ok) throw new Error(`NCBI GDS ESummary 错误：${res.status}`);
+      return res.json();
+    });
+    const uids = data.result?.uids || chunk;
+    records.push(...uids.map((uid) => normalizeGeoSummary(uid, data.result?.[uid])).filter(Boolean));
+  }
+  return records;
+}
+
+function normalizeGeoSummary(uid, item = {}) {
+  const accession = item.accession || item.gse || item.gds || item.acc || uid;
+  const platform = Array.isArray(item.gpl) ? item.gpl.join("; ") : item.gpl || item.platform || item.ptechType || "";
+  const samples = item.n_samples || item.samples || item.n_samples_total || item.sampleCount || "";
+  const organism = item.taxon || item.organism || item.organisms || "";
+  const entryType = item.entryType || item.gdsType || item.type || "";
+  const summary = item.summary || item.description || item.title || "";
+  return {
+    id: String(accession),
+    uid: String(uid),
+    title: item.title || String(accession),
+    abstract: summary,
+    year: item.pdat?.match(/\d{4}/)?.[0] || item.valType || platform,
+    journal: organism,
+    publicationType: entryType,
+    mesh: [platform, samples ? `${samples} samples` : "", organism].filter(Boolean).join("; "),
+    platform,
+    samples,
+    organism,
+    accession: String(accession),
+    type: "geo"
+  };
 }
 
 function parseModelJson(content) {

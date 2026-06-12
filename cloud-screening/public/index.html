@@ -42,6 +42,16 @@
         <button id="searchPubMedButton" class="secondary" type="button">搜索并获取</button>
       </div>
 
+      <h2>GEO 在线获取</h2>
+      <label for="geoQuery">GEO / GDS 检索式</label>
+      <textarea id="geoQuery" placeholder='例如：((Colorectal Cancer) AND Microsatellite Stable) AND "Homo sapiens"[porgn:__txid9606]'></textarea>
+      <label for="geoRetmax">最多获取数据集</label>
+      <input id="geoRetmax" type="number" min="1" max="10000" value="200">
+      <div class="actions">
+        <button id="generateGeoQueryButton" class="secondary" type="button">生成 GEO 检索式</button>
+        <button id="searchGeoButton" class="secondary" type="button">搜索 GEO</button>
+      </div>
+
       <label for="researchQuestion">研究问题</label>
       <textarea id="researchQuestion" placeholder="例如：胃癌根治术后并发症的危险因素"></textarea>
       <label for="includeCriteria">纳入标准</label>

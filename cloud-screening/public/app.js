@@ -258,6 +258,40 @@ async function searchPubMed() {
   }
 }
 
+async function generateGeoQuery() {
+  try {
+    log("正在用 DeepSeek 生成 GEO 检索式...");
+    const data = await apiPost("/api/geo/query/generate", {
+      question: $("#researchQuestion").value.trim(),
+      include: $("#includeCriteria").value.trim(),
+      exclude: $("#excludeCriteria").value.trim()
+    });
+    $("#geoQuery").value = data.query || "";
+    log(`GEO 检索式生成完成：${(data.concepts || []).join("; ")}`);
+  } catch (error) {
+    log(`生成 GEO 检索式失败：${error.message}`);
+  }
+}
+
+async function searchGeo() {
+  try {
+    const query = $("#geoQuery").value.trim();
+    if (!query) return log("请先填写或生成 GEO 检索式。");
+    $("#taskType").value = "geo";
+    log("正在搜索 NCBI GEO DataSets 并获取 metadata...");
+    const data = await apiPost("/api/geo/search", {
+      query,
+      retmax: Number($("#geoRetmax").value) || 200
+    });
+    state.records = data.records || [];
+    state.results.clear();
+    log(`GEO 总命中 ${data.count} 条，已获取 ${state.records.length} 条 metadata。`);
+    render();
+  } catch (error) {
+    log(`GEO 搜索失败：${error.message}`);
+  }
+}
+
 async function testServer() {
   try {
     log("测试服务器与 DeepSeek 连接...");
@@ -305,6 +339,10 @@ function exportRows() {
       年份或平台: record.year,
       期刊或来源: record.journal,
       类型: record.publicationType || record.type,
+      GEO编号: record.accession || "",
+      平台: record.platform || "",
+      样本量: record.samples || "",
+      物种: record.organism || "",
       摘要或描述: record.abstract,
       AI判断: result.decision || "未筛选",
       分数: result.score ?? "",
@@ -376,6 +414,8 @@ $("#testButton").addEventListener("click", testServer);
 $("#generateQueryButton").addEventListener("click", generateQuery);
 $("#fetchPmidsButton").addEventListener("click", fetchByPmids);
 $("#searchPubMedButton").addEventListener("click", searchPubMed);
+$("#generateGeoQueryButton").addEventListener("click", generateGeoQuery);
+$("#searchGeoButton").addEventListener("click", searchGeo);
 $("#screenButton").addEventListener("click", screenRecords);
 $("#decisionFilter").addEventListener("change", renderResults);
 $("#exportExcelButton").addEventListener("click", exportExcel);
